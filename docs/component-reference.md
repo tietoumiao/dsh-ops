@@ -43,7 +43,7 @@ The shared catalogue has 20 entries. The generated PTC SDK contains 18 APIs: 15 
 | `ops_load_sdk` | Load 1-5 named PTC APIs for the next model step; no file operation runs | PTC-only |
 | Host `pwsh` | Windows-native operations using the host-selected PowerShell | Host policy |
 
-¹ **Fixed file operations use a trusted-operation policy fence, matching DSH fs-sandbox, not arbitrary-code isolation.** OS-readable paths are readable in all modes subject to the credential fence and current scoped authority; read-only rejects replacement, including its dry run; workspace-write permits writes under the workspace and this session's private temporary directory, and full access adds no write fence. The fixed Rust worker uses host subprocess governance plus no-follow traversal, budgets and CAS. Bash/run_code still require OS confinement; no unconfined fallback exists. On Windows, owned workspaces automatically receive directory-only WRITE_OWNER for the host grant prerequisite, with DACL backups; no recursive ACL edits or ownership changes. That preparation runs the package's own script as the current user before sandbox confinement applies, only in workspace-write, with `-ExecutionPolicy Bypass` (Group Policy still wins).
+¹ **Fixed file operations use a trusted-operation policy fence, matching DSH fs-sandbox, not arbitrary-code isolation.** OS-readable paths are readable in all modes subject to the credential fence and current scoped authority; read-only rejects replacement, including its dry run; workspace-write permits writes under the workspace and this session's private temporary directory, and full access adds no write fence. The fixed Rust worker uses host subprocess governance plus no-follow traversal, budgets and CAS. Bash/run_code still require OS confinement; no unconfined fallback exists. On Windows, a workspace whose DACL already grants the effective WRITE_OWNER prerequisite is used as-is whatever its owner; otherwise preparation adds a directory-only WRITE_OWNER ACE, with DACL backups, only when the current user owns the root; no recursive ACL edits or ownership changes (#651). That preparation runs the package's own script as the current user before sandbox confinement applies, only in workspace-write, with `-ExecutionPolicy Bypass` (Group Policy still wins).
 
 ---
 
@@ -258,6 +258,11 @@ not qualify, and a missing counterpart leaves the official tool exposed instead 
 assembly. Ownership changes are rechecked even when the schema bytes stay unchanged; Native shadows
 created by the OPS PTC adapter retain their tracked ownership. Disabling a consumer or its
 replacement switch restores the corresponding official tool.
+
+A refusal answers for the surface the last assembled request carried, not for the registry's
+current state. When a request was assembled before its replacement became visible, the official
+name it still carries is not refused, so a session is never told to call a tool that request was
+never given (#578).
 
 The resident `ops_read_files` is not the counterpart for `read`; Standard and Cordis publish
 `ops_inspect_local_file`, `ops_glob` and `ops_grep` as the reviewed counterparts.

@@ -1,11 +1,27 @@
 /** Live Bash command over the host subprocess service; no service registration. */
 import { Buffer } from 'node:buffer'
+import path from 'node:path'
 import type { SubprocessHandle, SubprocessOutputReader, SubprocessOutputRead } from '../adapter/dsh/types.js'
 import type { ShellExecutorOptions, ShellExecutionSpec, ShellCall, ShellExecution, ShellResult, ShellStream } from './types.js'
 import { DEFAULT_MAX_OUTPUT_BYTES, DEFAULT_MAX_SPILL_BYTES, shellEnvOverrides } from './constants.js'
 import { formatBashSpawnError } from './spawn-error.js'
 
 const emptyRead = (): SubprocessOutputRead => ({ text: '', nextOffset: 0, lossy: false })
+
+const ELECTRON_NODE_MODE = 'ELECTRON_RUN_AS_NODE'
+
+/** A confined Windows sandbox runs the Desktop executable itself as the runner; give it Node mode (#574). */
+function adaptElectronRunner(argv: string[], env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  if (!globalThis.process.versions.electron || !argv[0]) return env
+  const normalize = (file: string) => globalThis.process.platform === 'win32' ? path.resolve(file).toLowerCase() : path.resolve(file)
+  if (normalize(argv[0]) !== normalize(globalThis.process.execPath)) return env
+  const keyOf = (key: string) => globalThis.process.platform === 'win32' ? key.toUpperCase() : key
+  const existing = Object.entries(env).filter(([key]) => keyOf(key) === ELECTRON_NODE_MODE)
+  // Windows compares environment names case-insensitively: never leave two spellings behind.
+  if (existing.length === 1 && existing[0][1] === '1') return env
+  const cleaned = Object.fromEntries(Object.entries(env).filter(([key]) => keyOf(key) !== ELECTRON_NODE_MODE))
+  return { ...cleaned, [ELECTRON_NODE_MODE]: '1' }
+}
 
 /** Read the retained stream after settlement, preserving honest truncation facts. */
 export function settledStream(reader: SubprocessOutputReader | undefined, includeMetadata = false): ShellStream {
@@ -83,6 +99,7 @@ export function startBashExecution({ file, source, subprocess, prepareArgv, env 
       }
       controller.signal.throwIfAborted()
       if (!subprocess) throw new Error('Host subprocess service is unavailable')
+      const childEnv = shellEnvOverrides(globalThis.process.env, env)
       handle = subprocess.spawn({
         argv: preparedArgv,
         // Legacy direct executor callers can omit cwd; scoped host calls resolve it before this seam.
@@ -95,7 +112,7 @@ export function startBashExecution({ file, source, subprocess, prepareArgv, env 
         },
         graceMs: spec.graceMs,
         signal: controller.signal,
-        env: shellEnvOverrides(globalThis.process.env, env),
+        env: prepareArgv ? adaptElectronRunner(preparedArgv, childEnv) : childEnv,
       })
       const outcome = await handle.done
       value = {
